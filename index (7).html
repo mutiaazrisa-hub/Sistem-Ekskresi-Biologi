@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WebAR Sistem Ekskresi Manusia</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#e6edf3;font:14px system-ui,sans-serif;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100dvh}
+header{display:flex;gap:10px;align-items:center;padding:6px 10px;background:#161b22}
+header b{white-space:nowrap}nav{display:flex;gap:6px;overflow-x:auto}
+button{background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+button.on{background:#1f6feb;border-color:#58a6ff}
+main{flex:1;display:flex;min-height:0}
+#stage{flex:1;position:relative;background:radial-gradient(#1b2735,#0d1117);min-width:0}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+#ln,#lbls{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:hidden}
+#ln line{stroke:#fff9;stroke-width:1}
+.lbl{position:absolute;left:0;top:0;font-size:12px;background:#000b;padding:2px 6px;border-radius:4px;white-space:nowrap}
+#load,#err{position:absolute;left:10px;top:10px;right:10px;background:#000c;padding:8px;border-radius:6px}
+#err{background:#8b1a1a}
+aside{width:340px;padding:10px;overflow:auto;background:#161b22;display:flex;flex-direction:column;gap:8px}
+aside h2{margin:0;font-size:17px}aside p{margin:0;line-height:1.5}#inf{color:#7ee787}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+footer{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:6px 10px;background:#161b22}
+footer label,aside label{display:flex;gap:4px;align-items:center;font-size:12px}
+#bmv{display:none}.ar #bmv{display:inline-block}
+.ar,.ar #app,.ar #stage{background:transparent!important}.ar canvas{background:transparent}
+#note{font-size:11px;color:#8b949e}
+@media(max-width:800px){main{flex-direction:column}aside{width:100%;max-height:40%}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head><body>
+<div id="app">
+<header><b>🫘 WebAR Sistem Ekskresi</b><nav id="nav"></nav></header>
+<main>
+<div id="stage"><canvas id="c"></canvas><svg id="ln"></svg><div id="lbls"></div>
+<div id="load">Memuat pustaka 3D…</div><div id="err" hidden></div></div>
+<aside>
+<h2 id="t"></h2><p id="tx"></p><div class="row" id="stg"></div><p id="inf">Klik bagian organ pada model untuk melihat keterangannya.</p>
+<div class="row"><button id="ba">🔊 Narasi otomatis: mati</button></div>
+<div class="row"><button id="n1">▶ Putar</button><button id="n2">⏯ Jeda/Lanjut</button><button id="n3">↻ Ulangi</button>
+<label>Volume <input id="vol" type="range" min="0" max="1" step=".1" value=".9"></label></div>
+<p id="note">Model dibuat prosedural (skematis, bukan hasil pindai medis). Narasi memakai suara sintetis peramban (Web Speech API); efek suara dibuat sintetis, bukan rekaman biologis.</p>
+<p id="arinfo" class="note"></p>
+</aside></main>
+<footer>
+<button id="bp">⏸ Jeda animasi</button><button id="br">↻ Ulang animasi</button>
+<label>Kecepatan <input id="sp" type="range" min=".25" max="3" step=".25" value="1"></label>
+<label>Transparansi <input id="tr" type="range" min=".05" max="1" step=".05" value=".5"></label>
+<button id="bl" class="on">Label</button><button id="bs">Penampang</button><button id="bx">Bongkar</button>
+<button id="bz1">−</button><button id="bz2">＋</button><button id="bar">Lihat dalam AR</button><button id="bmv">Geser (AR)</button>
+</footer></div>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+const $=s=>document.querySelector(s),V=(x,y,z)=>new THREE.Vector3(x,y,z),tmp=V(0,0,0);
+const fail=m=>{const e=$('#err');e.hidden=false;e.textContent='⚠ '+m};
+addEventListener('error',e=>fail('Terjadi kesalahan: '+e.message));
+addEventListener('unhandledrejection',e=>fail('Kesalahan: '+(e.reason&&e.reason.message||e.reason)));
+let R;try{R=new THREE.WebGLRenderer({canvas:$('#c'),antialias:true,alpha:true})}catch(e){$('#load').hidden=true;fail('WebGL tidak tersedia di perangkat ini. Coba browser lain (Chrome/Edge/Safari terbaru).');throw e}
+R.setPixelRatio(Math.min(devicePixelRatio,2));R.localClippingEnabled=true;R.xr.enabled=true;
+const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(45,1,.05,100),ctl=new OrbitControls(cam,R.domElement);
+ctl.enableDamping=true;ctl.minDistance=1.5;ctl.maxDistance=30;
+scene.add(new THREE.HemisphereLight(0xffffff,0x445566,1.1));const dl=new THREE.DirectionalLight(0xffffff,1.6);dl.position.set(3,5,6);scene.add(dl);
+const root=new THREE.Group();scene.add(root);
+const mat=(c,o={})=>new THREE.MeshStandardMaterial({color:c,roughness:.6,transparent:true,side:THREE.DoubleSide,...o});
+const crv=p=>new THREE.CatmullRomCurve3(p.map(a=>V(...a)));
+const tube=(c,r,col,o)=>new THREE.Mesh(new THREE.TubeGeometry(c,80,r,10),mat(col,o));
+const ell=(a,b,c,col,o)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(1,40,28),mat(col,o));m.scale.set(a,b,c);return m};
+const G={};['body','fx','kid','nef','skin','lung'].forEach(n=>{G[n]=new THREE.Group();G[n].visible=false;root.add(G[n])});
+const parts=[],labels=[],PS=[],NS='http://www.w3.org/2000/svg';
+function reg(g,m,o){o.base=m.position.clone();o.grp=g;o.ex=o.ex||V(0,0,0);o.o=m.material.opacity;o.key=o.key||'';m.userData=o;g.add(m);parts.push(m);
+ if(o.lb){const el=document.createElement('div');el.className='lbl';el.textContent=o.lb[0];$('#lbls').append(el);const ln=document.createElementNS(NS,'line');$('#ln').append(ln);labels.push({el,ln,m,dx:o.lb[1],dy:o.lb[2],a:o.a||V(0,0,0)})}return m}
+const dot=(()=>{const c=document.createElement('canvas');c.width=c.height=32;const x=c.getContext('2d'),g=x.createRadialGradient(16,16,2,16,16,15);g.addColorStop(0,'#fff');g.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=g;x.fillRect(0,0,32,32);return new THREE.CanvasTexture(c)})();
+function mkPS(g,col,n,size,st,rate,fn){const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(n*3),3));
+ const p=new THREE.Points(geo,new THREE.PointsMaterial({color:col,size,map:dot,transparent:true,alphaTest:.05,depthWrite:false}));p.frustumCulled=false;g.add(p);PS.push({p,g,n,st,rate,fn})}
+const along=(c,j=.03)=>(u,i)=>{c.getPointAt(u,tmp);tmp.x+=Math.sin(i*12.9)*j;tmp.z+=Math.cos(i*7.1)*j;return tmp};
+const D=(a,b)=>a.distanceTo(b);
+
+/* ===== TUBUH ===== */
+{const g=G.body,fx=G.fx;
+ reg(g,Object.assign(new THREE.Mesh(new THREE.CapsuleGeometry(1,2,8,24),mat(0xe8b9a0,{opacity:.4,depthWrite:false})),{}),{name:'Kulit',key:'kulit',outer:1,pick:0}).scale.set(.85,1,.5);
+ const h=ell(.42,.5,.42,0xe8b9a0,{opacity:.4,depthWrite:false});h.position.set(0,2.55,0);reg(g,h,{name:'Kepala',key:'kulit',outer:1,pick:0});
+ const lung=(s)=>{const m=ell(.4,.75,.3,0xe58f9b);m.position.set(s*.52,.85,0);return reg(g,m,{name:'Paru-paru '+(s<0?'kanan':'kiri'),key:'paru',ex:V(s*.8,.5,0),info:'Terletak di rongga dada. Mengekskresikan karbon dioksida dan uap air saat ekspirasi.',lb:['Paru-paru '+(s<0?'kanan':'kiri'),s*70,-45]})};lung(-1);lung(1);
+ const li=ell(.62,.3,.34,0x7a2a22);li.position.set(-.38,.05,.12);reg(g,li,{name:'Hati',key:'hati',ex:V(-.8,0,.4),info:'Di rongga perut kanan atas. Mengubah amonia menjadi urea (siklus urea).',lb:['Hati',-85,0]});
+ const ht=ell(.2,.24,.2,0xb03a48);ht.position.set(.05,.78,.12);reg(g,ht,{name:'Jantung (konteks sirkulasi)',key:'hati paru',o:1,info:'Memompa darah yang mengangkut urea dan gas.'});
+ const kid=s=>{const m=ell(.17,.34,.14,0x8a2f2a);m.position.set(s*.42,-.4,-.2);m.rotation.z=s*.15;return reg(g,m,{name:'Ginjal '+(s<0?'kanan':'kiri'),key:'ginjal hati',ex:V(s*.8,-.1,-.4),info:'Sepasang organ berbentuk kacang di belakang rongga perut. Menyaring darah dan membentuk urine.',lb:['Ginjal '+(s<0?'kanan':'kiri'),s*85,s<0?45:35]})};kid(-1);kid(1);
+ const ur=s=>reg(g,tube(crv([[s*.42,-.6,-.2],[s*.3,-1.05,-.05],[0,-1.4,.1]]),.03,0xe0b040),{name:'Ureter',key:'ginjal hati',ex:V(s*.5,0,0),info:'Saluran yang membawa urine dari ginjal ke kandung kemih.',a:V(s*.33,-1,-.05)});ur(-1);ur(1);
+ const b=ell(.22,.22,.22,0xd9a86a);b.position.set(0,-1.5,.1);reg(g,b,{name:'Kandung kemih',key:'ginjal hati',ex:V(0,-.5,.3),info:'Menampung urine sementara sebelum dikeluarkan melalui uretra.',lb:['Kandung kemih',80,40]});
+ const BP=crv([[-.38,.05,.12],[-.12,.3,.05],[.02,.78,.12],[.14,.3,0],[.14,-.1,-.08],[.42,-.4,-.2],[.3,-1.05,-.05],[0,-1.5,.1]]);
+ fx.add(tube(BP,.022,0xc0392b,{opacity:.6}));
+ const L=V(-.38,.05,.12),O=V(-.38,.05,.12);
+ mkPS(fx,0xbf5af2,16,.09,'1',.3,(u,i)=>tmp.set(L.x+Math.sin(i*5)*.5,L.y+Math.cos(i*3)*.25,L.z+Math.sin(i*7)*.2).lerp(O,u));
+ mkPS(fx,0xffd60a,10,.1,'1',.3,(u,i)=>tmp.copy(O).lerp(BP.getPoint(.03),u));
+ mkPS(fx,0xffd60a,26,.1,'2',.05,(u,i)=>BP.getPointAt(u,tmp))}
+
+/* ===== PENAMPANG GINJAL ===== */
+const plane=new THREE.Plane(V(0,0,-1),0),cortexM=mat(0xb4524a,{depthWrite:false});
+{const g=G.kid,C=V(-.25,0,0),cx=new THREE.Mesh(new THREE.SphereGeometry(1,48,32),cortexM);cx.scale.set(1.1,1.7,.85);
+ reg(g,cx,{name:'Korteks renalis',key:'',outer:1,info:'Lapisan luar ginjal; berisi glomerulus dan kapsula Bowman.',lb:['Korteks renalis',95,-80],a:V(.85,1.15,0)});
+ for(let k=0;k<8;k++){if(k==4)continue;const a=k*Math.PI/4,P=V(.62*Math.cos(a),.95*Math.sin(a),.15*((k%3)-1)),d=C.clone().sub(P).normalize();
+  const m=new THREE.Mesh(new THREE.ConeGeometry(.3,.85,16),mat(0x6a1f1c));m.position.copy(P).multiplyScalar(.72).addScaledVector(C,.28);m.quaternion.setFromUnitVectors(V(0,1,0),d);
+  reg(g,m,{name:'Piramida ginjal (medula renalis)',key:'',ex:P.clone().normalize().multiplyScalar(.6),info:'Medula berisi tubulus dan duktus kolektivus; ujungnya mengalirkan urine ke kaliks.',lb:k==0?['Medula / piramida ginjal',100,-10]:null,a:V(0,0,0)})}
+ const pv=ell(.2,.28,.2,0xe3b778);pv.position.copy(C);reg(g,pv,{name:'Pelvis renalis',key:'',ex:V(-.7,0,0),info:'Rongga penampung urine sebelum masuk ureter.',lb:['Pelvis renalis',-100,-60]});
+ reg(g,tube(crv([[-.25,.15,0],[-.1,.5,0],[.05,.75,0]]),.05,0xe3b778),{name:'Kaliks',key:'',ex:V(-.3,.4,0),info:'Saluran bentuk corong yang menampung urine dari piramida.',lb:['Kaliks',-90,-10],a:V(-.1,.5,0)});
+ reg(g,tube(crv([[-.3,-.1,0],[-.9,-.3,0],[-.95,-1,0],[-.9,-2.2,0]]),.07,0xe0b040),{name:'Ureter',key:'',info:'Membawa urine ke kandung kemih.',lb:['Ureter',-70,40],a:V(-.95,-1.2,0)});
+ reg(g,tube(crv([[-1.8,.9,.1],[-1,.5,.1],[-.35,.15,.1]]),.07,0xd62828),{name:'Arteri renalis',key:'',ex:V(-.5,.3,0),info:'Membawa darah kaya oksigen dan urea ke ginjal.',lb:['Arteri renalis',-90,-30],a:V(-1.2,.6,.1)});
+ reg(g,tube(crv([[-1.8,-.1,.1],[-1,-.15,.1],[-.35,-.05,.1]]),.08,0x2a5db0),{name:'Vena renalis',key:'',ex:V(-.5,-.3,0),info:'Membawa darah yang sudah disaring keluar dari ginjal.',lb:['Vena renalis',-90,15],a:V(-1.2,-.12,.1)})}
+
+/* ===== NEFRON ===== */
+const P1=[[-2.5,.95,0],[-2.15,.55,0],[-2.85,.2,0],[-2.15,-.15,0],[-2.85,-.5,0],[-2.5,-.85,0]],
+P2=[[-2.5,-.85,0],[-2,-1.8,0],[-1.6,-3,0],[-1.2,-3.4,0],[-.8,-3,0],[-.8,-1.5,0],[-.8,-.3,0]],
+P3=[[-.8,-.3,0],[-.4,.1,0],[.1,-.2,0],[.5,.2,0],[.1,.5,0],[.6,.8,0],[1.1,.9,0]],
+P4=[[1.1,.9,0],[1.5,.6,0],[1.6,-.5,0],[1.6,-2,0],[1.6,-3.6,0]],
+CP=[[-1.6,2.1,-.4],[-2.2,.6,-.4],[-2.2,-.6,-.4],[-1.5,-2.8,-.4],[-.4,-2.8,-.4],[-.3,-.2,-.4],[.5,.5,-.4],[1,1.9,-.4],[1,2.6,-.4]];
+{const g=G.nef,c1=crv(P1),c2=crv(P2),c3=crv(P3),c4=crv(P4),cc=crv(CP),all=crv([...P1,...P2.slice(1),...P3.slice(1),...P4.slice(1)]);
+ const glo=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(Array.from({length:14},(_,i)=>V(-2.5+.28*Math.cos(i*2.1),1.5+.28*Math.sin(i*1.7),.28*Math.sin(i*2.9))),true),120,.06,8),mat(0xd62828));
+ reg(g,glo,{name:'Glomerulus',key:'1',info:'Gulungan kapiler; tekanan tinggi menyaring darah ke kapsula Bowman.',lb:['Glomerulus',-80,-45],a:V(-2.5,1.5,0)});
+ const cap=ell(.55,.55,.55,0xffe9a0,{opacity:.25,depthWrite:false});cap.position.set(-2.5,1.5,0);reg(g,cap,{name:'Kapsula Bowman',key:'1',outer:1,info:'Mangkuk yang menampung filtrat dari glomerulus.',lb:['Kapsula Bowman',-90,10]});
+ reg(g,tube(crv([[-3.7,2.3,0],[-3.1,1.9,0],[-2.7,1.65,0]]),.09,0xd62828),{name:'Arteriol aferen',key:'123',info:'Membawa darah ke glomerulus.',lb:['Arteriol aferen',-80,-15],a:V(-3.3,2,0)});
+ reg(g,tube(crv([[-2.3,1.65,0],[-1.9,1.9,0],[-1.6,2.1,-.35]]),.06,0xa01830),{name:'Arteriol eferen',key:'123',info:'Membawa darah keluar glomerulus menuju kapiler peritubular.',lb:['Arteriol eferen',50,-35],a:V(-1.9,1.9,0)});
+ reg(g,tube(c1,.1,0xe8c07a),{name:'Tubulus kontortus proksimal',key:'123',ex:V(-.6,0,0),info:'Reabsorpsi glukosa, asam amino, ion, dan banyak air; sekresi zat tertentu.',lb:['Tubulus kontortus proksimal',-90,0],a:c1.getPoint(.5)});
+ reg(g,tube(c2,.07,0xd9a05b),{name:'Lengkung Henle',key:'2',ex:V(0,-.6,0),info:'Reabsorpsi air dan garam; membantu memekatkan urine.',lb:['Lengkung Henle',-90,15],a:c2.getPoint(.5)});
+ reg(g,tube(c3,.09,0xe8c07a),{name:'Tubulus kontortus distal',key:'23',ex:V(0,.7,0),info:'Pengaturan ion dan air serta sekresi tubular.',lb:['Tubulus kontortus distal',20,-70],a:c3.getPoint(.5)});
+ reg(g,tube(c4,.13,0xcf8a3a),{name:'Duktus kolektivus',key:'23',ex:V(.7,0,0),info:'Mengumpulkan urine dan mengatur air akhir (ADH); menuju pelvis renalis.',lb:['Duktus kolektivus',80,0],a:c4.getPoint(.55)});
+ reg(g,tube(cc,.05,0xb03050,{opacity:.8}),{name:'Kapiler peritubular',key:'23',info:'Menerima zat hasil reabsorpsi dan memberi zat untuk sekresi.',lb:['Kapiler peritubular',-80,60],a:cc.getPoint(.35)});
+ mkPS(g,0xff3b30,30,.13,'123',.04,along(crv([[-3.7,2.3,0],[-3.1,1.9,0],[-2.5,1.5,.1],[-2.2,1.6,.1],[-1.9,1.9,0],...CP]),.02));
+ const EX=V(-2.5,.95,0);mkPS(g,0xffd60a,16,.11,'1',.25,(u,i)=>tmp.set(-2.5+.25*Math.sin(i*5),1.5+.2*Math.cos(i*3),.2*Math.sin(i*7)).lerp(EX,u));
+ mkPS(g,0xffd60a,36,.11,'123',.03,along(all,.04));
+ const smp=Array.from({length:240},(_,i)=>cc.getPoint(i/239)),near=p=>smp.reduce((b,q)=>D(q,p)<D(b,p)?q:b);
+ const xf=(c,lo,hi,n,rev)=>{const A=[],B=[];for(let i=0;i<n;i++){const a=c.getPoint(lo+(hi-lo)*((i*.618)%1));A.push(a);B.push(near(a))}return (u,i)=>rev?tmp.lerpVectors(B[i],A[i],u):tmp.lerpVectors(A[i],B[i],u)};
+ mkPS(g,0x30d158,28,.12,'2',.2,xf(c1,.05,1,28));mkPS(g,0x30d158,10,.12,'2',.2,xf(c2,0,.4,10));mkPS(g,0x30d158,8,.12,'2',.2,xf(c2,.6,1,8));
+ mkPS(g,0xbf5af2,10,.13,'3',.2,xf(c1,.3,.9,10,1));mkPS(g,0xbf5af2,10,.13,'3',.2,xf(c3,.2,.8,10,1));
+ mkPS(g,0xff9f0a,10,.14,'23',.08,along(c4,.04))}
+
+/* ===== KULIT ===== */
+{const g=G.skin;[[1,.25,0xe9b49a,'Epidermis','Lapisan terluar; melindungi tubuh dan menjadi tempat pori keringat.',[ -110,-40]],[.375,1,0xd98a7a,'Dermis','Berisi pembuluh darah, kelenjar keringat, dan folikel rambut.',[-110,0]],[-.575,.9,0xf0d890,'Hipodermis','Jaringan lemak di bawah dermis.',[-110,40]]].forEach(([y,h,c,n,i,l])=>{const m=new THREE.Mesh(new THREE.BoxGeometry(4,h,2),mat(c,{opacity:.4,depthWrite:false}));m.position.set(0,y,0);reg(g,m,{name:n,key:'',outer:1,info:i,lb:[n,l[0],l[1]],a:V(-2,0,1)})});
+ const coil=crv(Array.from({length:44},(_,i)=>[-.4+.17*Math.cos(i*.9),-.62+i*.012+.17*Math.sin(i*.9)*.6,.17*Math.sin(i*.9)]));
+ const duct=crv([[-.4,-.4,0],[-.3,0,0],[-.5,.35,0],[-.35,.7,0],[-.4,1.13,0],[-.4,1.45,0]]);
+ reg(g,tube(coil,.045,0x7cc7ff),{name:'Kelenjar keringat',key:'',info:'Mengambil air, garam, dan sedikit urea dari darah untuk membentuk keringat.',lb:['Kelenjar keringat',-110,60],a:V(-.4,-.45,0)});
+ reg(g,tube(duct,.03,0x9fd8ff),{name:'Saluran keringat',key:'',info:'Menyalurkan keringat ke permukaan kulit melalui pori.',lb:['Saluran keringat',60,-40],a:V(-.4,.3,0)});
+ const vs=crv([[-1.9,-.85,.35],[-1.2,-.5,.2],[-.62,-.42,.1],[-.7,-.8,.25],[.2,-.9,.35],[1.9,-.8,.35]]);
+ reg(g,tube(vs,.06,0xd62828),{name:'Pembuluh darah',key:'',info:'Mengalirkan darah; sumber air keringat.',lb:['Pembuluh darah',-110,90],a:V(-1.5,-.7,.3)});
+ const hf=crv([[.9,-.6,0],[1,.2,0],[1.2,1,0],[1.5,1.8,0]]);
+ reg(g,tube(hf,.045,0x4a3320),{name:'Folikel dan batang rambut',key:'',info:'Folikel rambut berada di dermis; rambut tumbuh keluar melewati epidermis.',lb:['Folikel rambut',60,30],a:V(1.05,.2,0)});
+ const A=V(-.62,-.42,.1),B=V(-.4,-.55,0);
+ mkPS(g,0x4aa8ff,14,.1,'1',.3,(u,i)=>tmp.copy(A).lerp(B,u).add(V(Math.sin(i*3)*.03,Math.cos(i*5)*.03,0)));
+ mkPS(g,0xaee2ff,14,.12,'2',.12,along(duct,.01))}
+
+/* ===== PARU / SALURAN NAPAS ===== */
+{const g=G.lung,leaves=[],used={},NM={1:'Bronkus',3:'Bronkiolus'};
+ [-1,1].forEach(s=>{const m=ell(1.1,1.6,.7,0xe58f9b,{opacity:.12,depthWrite:false});m.position.set(s*1.05,-.1,0);reg(g,m,{name:'Paru-paru '+(s<0?'kanan':'kiri'),key:'',outer:1,pick:0})});
+ reg(g,tube(new THREE.LineCurve3(V(0,2.4,0),V(0,1.2,0)),.13,0xd9d9e8),{name:'Trakea',key:'',info:'Saluran udara utama; dindingnya ditopang cincin tulang rawan.',lb:['Trakea',80,-20],a:V(0,1.8,0)});
+ let al=0;const Z=V(0,0,1),Y=V(0,1,0);
+ function tree(p,d,len,r,lvl,path){const q=p.clone().addScaledVector(d,len),pts=[...path,q];
+  const lb=!used[lvl]&&NM[lvl]?(used[lvl]=1,[NM[lvl],lvl==1?-90:90,lvl*20-30]):null;
+  reg(g,tube(new THREE.LineCurve3(p,q),r,0xd9d9e8),{name:NM[lvl]||'Bronkiolus',key:'',info:lvl==1?'Cabang trakea menuju tiap paru-paru.':'Saluran kecil yang membawa udara menuju alveolus.',lb,a:p.clone().lerp(q,.5)});
+  if(lvl<4)[-1,1].forEach(s=>tree(q,d.clone().applyAxisAngle(Z,s*.55).applyAxisAngle(Y,s*.3*(lvl%2?1:-1)).normalize(),len*.72,r*.75,lvl+1,pts));
+  else{leaves.push(new THREE.CatmullRomCurve3(pts));for(let k=0;k<3;k++){const m=ell(.13,.13,.13,0xff8fa3);m.position.copy(q).add(V(Math.sin(k*2.1)*.12,Math.cos(k*2.1)*.12-.08,Math.sin(k*4)*.1));
+   if(!al++)reg(g,m,{name:'Alveolus',key:'',info:'Kantung udara kecil berdinding tipis dikelilingi kapiler; tempat pertukaran gas.',lb:['Alveolus',80,30]});else g.add(m)}}}
+ [-1,1].forEach(s=>tree(V(0,1.2,0),V(s*.5,-.85,0).normalize(),.9,.09,1,[V(0,2.4,0),V(0,1.2,0)]));
+ const N=leaves.length;
+ mkPS(g,0x30d158,N*3,.1,'1',.15,(u,i)=>leaves[i%N].getPointAt(u,tmp));
+ mkPS(g,0x9aa0a6,N*3,.1,'2',.15,(u,i)=>leaves[i%N].getPointAt(1-u,tmp));
+ mkPS(g,0x8ecbff,N*2,.1,'2',.15,(u,i)=>leaves[i%N].getPointAt(1-((u+.12)%1),tmp))}
+
+/* ===== TEKS & VIEW ===== */
+const ST={nef:[['Filtrasi','1','Filtrasi: darah masuk ke glomerulus lewat arteriol aferen. Tekanan tinggi mendorong air, glukosa, asam amino, urea, dan ion ke kapsula Bowman. Sel darah dan sebagian besar protein tetap di darah. Hasilnya filtrat glomerulus (urine primer).'],['Reabsorpsi','2','Reabsorpsi: di tubulus proksimal, glukosa dan asam amino diserap kembali hampir seluruhnya, bersama ion dan sebagian besar air. Lengkung Henle, tubulus distal, dan duktus kolektivus mengatur air dan garam. Hasilnya urine sekunder.'],['Sekresi tubular','3','Sekresi tubular: zat tertentu seperti ion H+, K+, dan sebagian obat dipindahkan dari kapiler peritubular ke tubulus, terutama di tubulus proksimal dan distal. Hasil akhirnya urine yang mengalir ke pelvis, ureter, lalu kandung kemih.']],
+ hati:[['Pembentukan urea','1','Amonia hasil pemecahan asam amino masuk ke sel hati. Melalui siklus urea, amonia yang beracun diubah menjadi urea, lalu dilepas ke darah.'],['Urea menuju ginjal','2','Urea beredar bersama darah menuju ginjal, disaring di nefron, lalu keluar bersama urine melalui ureter dan kandung kemih. Jalur ini disederhanakan.']],
+ lung:[['Inspirasi','1','Inspirasi: udara kaya oksigen masuk lewat trakea, bronkus, dan bronkiolus menuju alveolus.'],['Ekspirasi','2','Ekspirasi: karbon dioksida dan uap air dari alveolus keluar lewat bronkiolus, bronkus, dan trakea. Ini proses ekskresi paru-paru.']],
+ skin:[['Pembentukan keringat','1','Kelenjar keringat mengambil air, garam, dan sedikit urea dari pembuluh darah di sekitarnya.'],['Pengeluaran keringat','2','Keringat mengalir melalui saluran keringat menuju pori di permukaan epidermis.']]};
+const BV=['tubuh','ginjal','paru','hati'];
+const VIEWS={
+tubuh:{n:'Seluruh tubuh',g:['body'],H:'',c:[0,.2,9.5],t:[0,0,0],x:'Sistem ekskresi mengeluarkan zat sisa metabolisme: ginjal (urea, kelebihan air dan garam), kulit (keringat), paru-paru (karbon dioksida dan uap air), dan hati (mengubah amonia menjadi urea). Pengeluaran sisa pencernaan (feses) disebut defekasi, bukan ekskresi.'},
+ginjal:{n:'Ginjal',g:['body'],H:'ginjal',c:[0,-.6,5.5],t:[0,-.5,0],x:'Ginjal berjumlah sepasang, berbentuk seperti kacang, terletak di belakang rongga perut di kanan dan kiri tulang belakang. Ginjal menyaring darah dan membentuk urine, yang dialirkan lewat ureter ke kandung kemih.'},
+kid:{n:'Penampang ginjal',g:['kid'],H:'',c:[0,0,6.5],t:[-.3,0,0],sec:1,x:'Penampang ginjal: korteks di bagian luar, medula berisi piramida ginjal. Urine dari piramida mengalir ke kaliks, pelvis renalis, lalu ureter. Arteri renalis membawa darah masuk, vena renalis membawa darah keluar. Coba tombol Penampang dan Bongkar.'},
+nef:{n:'Nefron',g:['nef'],H:'',c:[0,-.4,11.5],t:[-.5,-.5,0],st:'nef',x:'Nefron adalah unit fungsional ginjal: glomerulus dan kapsula Bowman, tubulus kontortus proksimal, lengkung Henle, tubulus kontortus distal, lalu duktus kolektivus. Pilih tahap: filtrasi, reabsorpsi, atau sekresi. Merah: darah, kuning: filtrat, hijau: zat direabsorpsi, ungu: zat disekresi, oranye: urine.'},
+skin:{n:'Kulit',g:['skin'],H:'',c:[0,1.2,6.2],t:[0,.3,0],st:'skin',x:'Kulit tersusun dari epidermis, dermis, dan hipodermis. Kelenjar keringat di dermis mengambil air, garam, dan sedikit urea dari darah, lalu menyalurkannya lewat saluran keringat ke pori. Fungsi utama keringat juga mengatur suhu tubuh.'},
+paru:{n:'Paru-paru',g:['body'],H:'paru',c:[0,.8,5.5],t:[0,.8,0],x:'Paru-paru kanan dan kiri berada di rongga dada, dilindungi tulang rusuk. Paru-paru mengekskresikan karbon dioksida dan uap air hasil respirasi sel.'},
+lung:{n:'Saluran napas & alveolus',g:['lung'],H:'',c:[0,.3,8],t:[0,.3,0],st:'lung',x:'Udara mengalir melalui trakea, bronkus, bronkiolus, lalu alveolus. Di alveolus terjadi pertukaran gas dengan kapiler darah: oksigen masuk, karbon dioksida keluar. Animasi ini konseptual.'},
+hati:{n:'Hati',g:['body','fx'],H:'hati',c:[0,-.1,6.5],t:[0,-.2,0],st:'hati',x:'Hati terletak di rongga perut kanan atas. Hati mengubah amonia (beracun, dari pemecahan asam amino) menjadi urea melalui siklus urea. Urea diangkut darah ke ginjal dan dikeluarkan bersama urine.'}};
+let view='',H='',stage='',play=true,T=0,spd=1,tr=.5,lbOn=true,sec=false,exT=0,ex=0,vol=.9,auto=false,mvT=0,mv=false;
+const cg=V(0,0,9),tg=V(0,0,0);
+$('#nav').innerHTML=Object.entries(VIEWS).map(([k,v])=>`<button data-k="${k}">${v.n}</button>`).join('');
+$('#nav').onclick=e=>{const k=e.target.dataset&&e.target.dataset.k;if(k)go(k)};
+/* audio */
+const syn=window.speechSynthesis;let cur='',ac;
+function say(t){cur=t;if(!syn){$('#note').textContent='Peramban ini tidak mendukung narasi suara. Gunakan teks pendamping.';return}syn.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='id-ID';u.volume=vol;u.rate=.95;const v=syn.getVoices().find(v=>v.lang.toLowerCase().startsWith('id'));if(v)u.voice=v;syn.speak(u)}
+function sfx(f){try{ac=ac||new(window.AudioContext||window.webkitAudioContext)();const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=Math.max(.0002,.05*vol);o.connect(g).connect(ac.destination);o.start();g.gain.exponentialRampToValueAtTime(.0001,ac.currentTime+.18);o.stop(ac.currentTime+.2)}catch(e){}}
+function setText(t){$('#tx').textContent=t;cur=t;if(auto)say(t)}
+function go(k){const v=VIEWS[k];view=k;H=v.H;stage='';T=0;
+ Object.entries(G).forEach(([n,g])=>g.visible=v.g.includes(n));
+ sec=!!v.sec;cortexM.clippingPlanes=sec?[plane]:[];cortexM.needsUpdate=true;$('#bs').classList.toggle('on',sec);
+ $('#t').textContent=v.n;$('#inf').textContent='Klik bagian organ pada model untuk melihat keterangannya.';
+ document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.k===k));
+ const s=v.st?ST[v.st]:[];$('#stg').innerHTML=s.length?`<button data-s="" class="on">Semua tahap</button>`+s.map(a=>`<button data-s="${a[1]}">${a[0]}</button>`).join(''):'';
+ const asp=$('#stage').clientWidth/Math.max(1,$('#stage').clientHeight),f=asp<1?.9/asp:1;
+ tg.set(...v.t);cg.set(...v.c).sub(tg).multiplyScalar(f).add(tg);mvT=1.5;setText(v.x);sfx(520)}
+$('#stg').onclick=e=>{const s=e.target.dataset&&e.target.dataset.s;if(s===undefined)return;stage=s;T=0;if(view==='nef')H=s;
+ document.querySelectorAll('#stg button').forEach(b=>b.classList.toggle('on',b.dataset.s===s));
+ const a=(ST[VIEWS[view].st]||[]).find(a=>a[1]===s);setText(a?a[2]:VIEWS[view].x);sfx(680)};
+/* kontrol */
+$('#bp').onclick=e=>{play=!play;e.target.textContent=play?'⏸ Jeda animasi':'▶ Jalankan animasi'};
+$('#br').onclick=()=>{T=0;play=true;$('#bp').textContent='⏸ Jeda animasi'};
+$('#sp').oninput=e=>spd=+e.target.value;$('#tr').oninput=e=>tr=+e.target.value;
+$('#bl').onclick=e=>{lbOn=!lbOn;e.target.classList.toggle('on',lbOn)};
+$('#bs').onclick=e=>{sec=!sec;cortexM.clippingPlanes=sec?[plane]:[];cortexM.needsUpdate=true;e.target.classList.toggle('on',sec);if(sec&&view!=='kid')$('#inf').textContent='Penampang berlaku pada tampilan "Penampang ginjal".'};
+$('#bx').onclick=e=>{exT=exT?0:1;e.target.classList.toggle('on',!!exT);if(exT&&!['tubuh','ginjal','paru','hati','kid'].includes(view))$('#inf').textContent='Bongkar berlaku pada tampilan tubuh dan penampang ginjal.'};
+const zoom=f=>{if(R.xr.isPresenting)root.scale.multiplyScalar(1/f);else{const d=cam.position.clone().sub(ctl.target).multiplyScalar(f);cam.position.copy(ctl.target).add(d)}};
+$('#bz1').onclick=()=>zoom(1.25);$('#bz2').onclick=()=>zoom(.8);
+$('#vol').oninput=e=>vol=+e.target.value;
+$('#ba').onclick=e=>{auto=!auto;e.target.textContent='🔊 Narasi otomatis: '+(auto?'nyala':'mati');if(auto)say(cur);else syn&&syn.cancel()};
+$('#n1').onclick=()=>say(cur);$('#n3').onclick=()=>say(cur);
+$('#n2').onclick=()=>{if(!syn)return;syn.speaking&&!syn.paused?syn.pause():syn.resume()};
+$('#bmv').onclick=e=>{mv=!mv;e.target.classList.toggle('on',mv)};
+/* klik organ */
+const ray=new THREE.Raycaster(),ndc=new THREE.Vector2();let dn=null;
+R.domElement.addEventListener('pointerdown',e=>dn=[e.clientX,e.clientY]);
+R.domElement.addEventListener('pointerup',e=>{if(!dn||Math.hypot(e.clientX-dn[0],e.clientY-dn[1])>6)return;const r=R.domElement.getBoundingClientRect();
+ ndc.set((e.clientX-r.left)/r.width*2-1,-((e.clientY-r.top)/r.height)*2+1);ray.setFromCamera(ndc,cam);
+ const h=ray.intersectObjects(parts.filter(m=>m.userData.grp.visible&&m.userData.pick!==0&&m.userData.info),false)[0];
+ if(h){const u=h.object.userData;$('#inf').innerHTML=`<b>${u.name}</b>: ${u.info}`;if(BV.includes(view)&&u.key)H=u.key.split(' ')[0];sfx(760);if(auto)say(u.name+'. '+u.info)}});
+/* AR */
+const arMsg=m=>$('#arinfo').textContent=m;
+$('#bar').onclick=async()=>{try{if(R.xr.isPresenting){R.xr.getSession().end();return}
+ if(!navigator.xr||!(await navigator.xr.isSessionSupported('immersive-ar')))return arMsg('AR tidak didukung perangkat/browser ini (butuh HTTPS dan Chrome Android dengan ARCore). Mode 3D interaktif tetap dapat digunakan.');
+ const s=await navigator.xr.requestSession('immersive-ar',{optionalFeatures:['dom-overlay'],domOverlay:{root:$('#app')}});
+ R.xr.setReferenceSpaceType('local');await R.xr.setSession(s)}catch(e){arMsg('Tidak dapat memulai AR: '+e.message)}};
+R.xr.addEventListener('sessionstart',()=>{ctl.enabled=false;root.position.set(0,-.3,-1.5);root.scale.setScalar(.12);document.body.classList.add('ar');$('#bar').textContent='Keluar AR';arMsg('AR aktif: 1 jari memutar, 2 jari (pinch) mengubah ukuran, tombol Geser untuk memindahkan, tombol −/＋ untuk ukuran.')});
+R.xr.addEventListener('sessionend',()=>{ctl.enabled=true;root.position.set(0,0,0);root.scale.setScalar(1);root.rotation.set(0,0,0);document.body.classList.remove('ar');$('#bar').textContent='Lihat dalam AR';arMsg('');rs()});
+const ptr=new Map();let pd=0;
+addEventListener('pointerdown',e=>{if(R.xr.isPresenting&&!e.target.closest('aside,footer,header')){ptr.set(e.pointerId,[e.clientX,e.clientY]);if(ptr.size==2){const p=[...ptr.values()];pd=Math.hypot(p[0][0]-p[1][0],p[0][1]-p[1][1])}}});
+addEventListener('pointermove',e=>{if(!ptr.has(e.pointerId))return;const o=ptr.get(e.pointerId),n=[e.clientX,e.clientY];ptr.set(e.pointerId,n);
+ if(ptr.size==1){const dx=n[0]-o[0],dy=n[1]-o[1];if(mv){root.position.x+=dx*.002;root.position.y-=dy*.002}else root.rotation.y+=dx*.01}
+ else if(ptr.size==2){const p=[...ptr.values()],d=Math.hypot(p[0][0]-p[1][0],p[0][1]-p[1][1]);if(pd>0)root.scale.multiplyScalar(d/pd);pd=d}});
+['pointerup','pointercancel'].forEach(t=>addEventListener(t,e=>ptr.delete(e.pointerId)));
+/* resize & loop */
+function rs(){if(R.xr.isPresenting)return;const s=$('#stage'),w=s.clientWidth,h=s.clientHeight;if(!w||!h)return;R.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix()}
+new ResizeObserver(rs).observe($('#stage'));rs();
+const wp=V(0,0,0);let last=performance.now();
+R.setAnimationLoop(()=>{const now=performance.now(),dt=Math.min(.05,(now-last)/1000);last=now;if(play)T+=dt*spd;ex+=(exT-ex)*.1;
+ parts.forEach(m=>{const u=m.userData;if(!u.grp.visible)return;const on=!H||u.key.includes(H);m.material.opacity=(u.outer||!on)?u.o*tr:u.o;m.position.copy(u.base).addScaledVector(u.ex,ex)});
+ PS.forEach(s=>{const vis=s.g.visible&&(!stage||s.st.includes(stage));s.p.visible=vis;if(!vis)return;const a=s.p.geometry.attributes.position.array;
+  for(let i=0;i<s.n;i++){const v=s.fn(((T*s.rate+i/s.n)%1+1)%1,i);a[3*i]=v.x;a[3*i+1]=v.y;a[3*i+2]=v.z}s.p.geometry.attributes.position.needsUpdate=true});
+ const W=$('#stage').clientWidth,Hh=$('#stage').clientHeight;
+ labels.forEach(L=>{const u=L.m.userData;let show=lbOn&&u.grp.visible&&(!u.outer||true);let x=0,y=0;
+  if(show){wp.copy(L.a).add(L.m.position);u.grp.localToWorld(wp);wp.project(cam);if(wp.z>1)show=false;x=(wp.x+1)/2*W;y=(1-wp.y)/2*Hh}
+  L.el.style.display=show?'block':'none';L.ln.style.display=show?'block':'none';if(!show)return;
+  L.el.style.transform=`translate(${x+L.dx}px,${y+L.dy}px) translate(${L.dx<0?'-100%':'0'},-50%)`;
+  L.ln.setAttribute('x1',x);L.ln.setAttribute('y1',y);L.ln.setAttribute('x2',x+L.dx);L.ln.setAttribute('y2',y+L.dy)});
+ if(!R.xr.isPresenting){if(mvT>0){mvT-=dt;cam.position.lerp(cg,.08);ctl.target.lerp(tg,.08)}ctl.update()}
+ R.render(scene,cam)});
+cam.position.set(0,.2,9.5);go('tubuh');$('#load').hidden=true;window.__ok=true;
+if(!navigator.xr)arMsg('AR tidak didukung browser ini. Mode 3D interaktif tetap tersedia.');
+</script>
+<script>setTimeout(function(){if(!window.__ok){var e=document.getElementById('err');e.hidden=false;e.textContent='⚠ Pustaka Three.js gagal dimuat dari CDN (jsDelivr). Periksa koneksi internet lalu muat ulang halaman.';document.getElementById('load').hidden=true}},10000)</script>
+<noscript>Aktifkan JavaScript untuk menggunakan alat peraga ini.</noscript>
+</body></html>
